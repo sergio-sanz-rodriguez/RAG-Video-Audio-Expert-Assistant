@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="images/au_tech_assistant_gui.png" alt="Into Picture" width="1000"/>
+  <img src="images/au_tech_assistant_gui_crop.png" alt="Into Picture" width="1000"/>
 </div>
 
 # AI-Powered Expert Assistant on Video & Audio Technologies
