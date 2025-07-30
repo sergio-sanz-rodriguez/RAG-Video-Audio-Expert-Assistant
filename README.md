@@ -25,7 +25,7 @@ A quick overview of its key features is listed next:
 Figure 1 shows an overview of the proposed assistant. The system is composed of three stages: indexing, retrieval, and generation, which are described next.
 
 <div align="center">
-  <img src="images/rag_diagram.png" alt="Into Picture" width="600"/>
+  <img src="images/rag_diagram.png" alt="Into Picture" width="800"/>
 </div>
 <div align="center">
   <figcaption> Figure 1: Overview of the RAG-based assistant architecture.</figcaption>
@@ -99,7 +99,7 @@ This RAG-based assistant is built using [LangChain](https://www.langchain.com/),
 Figure 3 shows a screenshot of the app’s Graphical User Interface (GUI). The text box at the top displays the ongoing conversation between the user and the LLM. The user types their query into the field labeled *Write your message*.
 
 <div align="center">
-  <img src="images/au_tech_assistant_gui.png" alt="Into Picture" width="1000"/>  
+  <img src="images/au_tech_assistant_gui.png" alt="Into Picture" width="800"/>  
 </div>
 <div align="center">
   <figcaption> Figure 2: A screenshot of the app’s GUI.</figcaption>
