@@ -14,8 +14,8 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import to_hex
 from typing import Optional
-from embeddings import ClaudeEmbeddings
-from common import Colors
+from modules.embeddings import ClaudeEmbeddings
+from modules.common import Colors
 from dotenv import load_dotenv
 from openai import OpenAI
 from colorama import Fore, Style, init
