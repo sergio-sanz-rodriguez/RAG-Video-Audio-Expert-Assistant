@@ -1,7 +1,4 @@
-<div align="center">
-  <img src="images/landing_image.png" alt="Into Picture" width="1000"/>
-</div>
-<br>
+![AI Expert Banner](images/landing_image.png)
 
 # AI-Powered Expert Assistant on Video & Audio Technologies
 
@@ -29,6 +26,8 @@ Figure 1 shows an overview of the proposed assistant. The system is composed of 
 
 <div align="center">
   <img src="images/rag_diagram.png" alt="Into Picture" width="600"/>
+</div>
+<div align="center">
   <figcaption> Figure 1: Overview of the RAG-based assistant architecture.</figcaption>
 </div>
 <br>
@@ -50,7 +49,9 @@ The current version of the assistant has indexed over 26,000 documents, resultin
 Figure 2 shows a 2D projection of the document embeddings, grouped by categories within the domain of video and audio processing and coding:
 
 <div align="center">
-  <img src="images/database_clustering.png" alt="Into Picture" width="500"/>
+  <img src="images/database_clustering.png" alt="Into Picture" width="500"/>  
+</div>
+<div align="center">  
   <figcaption> Figure 2: Visual representation of the document corpus.</figcaption>
 </div>
 <br>
@@ -98,7 +99,9 @@ This RAG-based assistant is built using [LangChain](https://www.langchain.com/),
 Figure 3 shows a screenshot of the app’s Graphical User Interface (GUI). The text box at the top displays the ongoing conversation between the user and the LLM. The user types their query into the field labeled *Write your message*.
 
 <div align="center">
-  <img src="images/au_tech_assistant_gui.png" alt="Into Picture" width="1000"/>
+  <img src="images/au_tech_assistant_gui.png" alt="Into Picture" width="1000"/>  
+</div>
+<div align="center">
   <figcaption> Figure 2: A screenshot of the app’s GUI.</figcaption>
 </div>
 <br>
@@ -125,6 +128,8 @@ The model responses are summarized in Table 1.
 
 <div align="center">
   <img src="images/high_impact_video_tech_llm_crop.png" alt="Into Picture" width="500"/>
+</div>
+<div align="center">  
   <figcaption> Table 1: Responses from different LLMs regarding high-impact video technologies.</figcaption>
 </div>
 <br>
