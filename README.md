@@ -59,7 +59,7 @@ Figure 2 shows a 2D projection of the document embeddings, grouped by categories
 Corpus indexing is performed **once initially** and updated whenever new documents are added to the database. In other words, the indexing stage is **decoupled** from the subsequent retrieval and generation stages.
 
 
-### 2.2. Retrieval
+### 2.2. Query and Retrieval
 At query time, the assistant dynamically enriches and refines user input before retrieving relevant content:
 
 - The current user query, along with the previous conversations, is fed into an LLM that performs query rewriting. This produces a context-enriched query that better reflects the user's intent.
@@ -70,10 +70,10 @@ At query time, the assistant dynamically enriches and refines user input before 
 
 This stage ensures that the most relevant pieces of information are selected for answer generation.
 
-### 2.3 Generation
+### 2.3 Answer Generation
 In the final stage, the system generates an informed, natural language response:
 
-- The LLM receives the original user query, the previous conversation history, and the retrieved K chunks as input.
+- The LLM receives the original user query, the previous conversation history, and the retrieved K chunks as input. In the current implementation, K is set to 15 chunks.
 
 - Based on this combined context, the LLM generates a detailed and domain-specific answer.
 
@@ -83,7 +83,7 @@ The same LLM can optionally be used for both query rewriting and answer generati
 
 ### 2.4. Supported LLMs
 
-The system supports:
+The system supports, for both query rephrasing and answer generation, the following LLMs:
 
 - Local LLMs via Ollama: DeepSeek, Gemma, LLama, Mistral, Magistral, Olmo, Qwen, etc.
 

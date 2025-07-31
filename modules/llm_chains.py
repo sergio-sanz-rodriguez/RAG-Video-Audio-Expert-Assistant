@@ -69,19 +69,53 @@ CUSTOM_LOG_LEVELS = {
 }
 
 class OllamaService:
+
+    """
+    Service class to interact with and manage the Ollama server.
+
+    Attributes:
+        url (str): The URL of the Ollama server.
+        logger (Logger): Logger instance used for logging.
+    """
+
     def __init__(self, url="http://localhost:11434", logger=None):
         self.url = url
         self.logger = logger or logging.getLogger(__name__)
 
+        """
+        Initializes the OllamaService.
+
+        Args:
+            url (str): The URL of the Ollama server.
+            logger (Logger, optional): Custom logger. If not provided, uses a default logger.
+        """
+
     # Ollama activation functions
     def is_running(self):
-            try:
-                response = requests.get(self.url)
-                return response.status_code == 200
-            except requests.exceptions.RequestException:
-                return False
+
+        """
+        Checks whether the Ollama server is running.
+
+        Returns:
+            bool: True if the server is up and running, False otherwise.
+        """
+
+        try:
+            response = requests.get(self.url)
+            return response.status_code == 200
+        except requests.exceptions.RequestException:
+            return False
 
     def activate(self, max_retries=10, delay=1):
+
+        """
+        Attempts to start the Ollama server if it is not already running.
+
+        Args:
+            max_retries (int): Number of retries to check for server startup.
+            delay (int): Delay between retries in seconds.
+        """
+
         if self.is_running():
             self.logger.info("Ollama is already running.")
             return
@@ -103,6 +137,14 @@ class OllamaService:
 
         
 class HTMLFormatter(logging.Formatter):
+
+    """
+    A custom logging formatter that outputs colored HTML-styled log messages.
+
+    Attributes:
+        COLOR_MAP (dict): Maps logging levels to color strings.
+    """
+
     COLOR_MAP = {
         logging.DEBUG: "blue",
         logging.INFO: "forestgreen",
@@ -112,6 +154,17 @@ class HTMLFormatter(logging.Formatter):
     }
     
     def format(self, record):
+
+        """
+        Formats a log record using HTML styles for log levels.
+
+        Args:
+            record (LogRecord): The log record to format.
+
+        Returns:
+            str: HTML-formatted log message.
+        """
+
         color = self.COLOR_MAP.get(record.levelno, "black")
         levelname = f'<span style="color:{color}; font-weight:bold;">[{record.levelname}]</span>'
         message = super().format(record)
@@ -120,11 +173,35 @@ class HTMLFormatter(logging.Formatter):
         return f"{levelname} {message}"
 
 class QueueHandler(logging.Handler):
+
+    """
+    Custom logging handler that places formatted log records into a queue.
+
+    Attributes:
+        log_queue (queue.Queue): The queue to send formatted log messages to.
+    """
+
     def __init__(self, log_queue):
+
+        """
+        Initializes the handler with a target queue.
+
+        Args:
+            log_queue (queue.Queue): Queue to store formatted log messages.
+        """
+
         super().__init__()
         self.log_queue = log_queue
 
     def emit(self, record):
+
+        """
+        Sends a formatted log record to the queue.
+
+        Args:
+            record (LogRecord): Log record to emit.
+        """
+
         self.log_queue.put(self.format(record))
 
 def setup_logger(
@@ -132,7 +209,19 @@ def setup_logger(
     name: Optional[str] = None,
     level: str = "info"
     ) -> logging.Logger:
-    
+
+    """
+    Configures and returns a customized logger with HTML formatting and optional queue logging.
+
+    Args:
+        log_queue (queue.Queue, optional): Queue for GUI log output.
+        name (str, optional): Name of the logger. Uses root logger if None.
+        level (str): Logging level as a string (e.g., "info", "debug").
+
+    Returns:
+        logging.Logger: Configured logger instance.
+    """
+        
     numeric_level = getattr(logging, level.upper(), None)
     if not isinstance(numeric_level, int):
         raise ValueError(f"Invalid log level: {level}")
