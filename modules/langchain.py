@@ -1,7 +1,5 @@
  # Generic
 import re
-import os
-import glob
 import numpy as np
 import logging
 import random
@@ -9,46 +7,22 @@ import torch
 import subprocess
 import requests
 import time
-import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.colors import to_hex
 from typing import Optional
-from modules.embeddings import ClaudeEmbeddings
-from modules.common import Colors
-from dotenv import load_dotenv
-from openai import OpenAI
-from colorama import Fore, Style, init
 
 # LangChain
 from langchain_ollama import ChatOllama
-from langchain_chroma import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain.memory import ConversationBufferMemory
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.document_loaders import DirectoryLoader, TextLoader, PyPDFLoader, PyMuPDFLoader, UnstructuredWordDocumentLoader, Docx2txtLoader
-from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain, LLMChain
+from langchain_openai import ChatOpenAI
+from langchain.chains import ConversationalRetrievalChain
 from langchain_core.runnables import RunnableMap, RunnableLambda
 from langchain.schema import Document
-from langchain.llms import HuggingFacePipeline
-from langchain_community.llms import HuggingFaceHub
+from langchain_community.llms import HuggingFacePipeline, HuggingFaceHub
 
 # Transformers
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-
-# Sklearn for clustering
-from sklearn.manifold import TSNE
-from sklearn.cluster import KMeans
-
-#Talker and Whisper Agents
-from io import BytesIO
-from pydub import AudioSegment
-from pydub.playback import play
-
 
 SEED = 42
 def set_seed(seed: int = 42):
@@ -66,6 +40,12 @@ CUSTOM_LOG_LEVELS = {
     'error': 0.5,
     'info': 1,
     'debug': 2
+}
+
+MODE_PRESETS = {
+    "conservative": {"temperature": 0.0, "top_k": 10, "top_p": 0.3, "do_sample": False, "seed": SEED},
+    "creative":     {"temperature": 0.8, "top_k": 70, "top_p": 0.9, "do_sample": True, "seed": None}, 
+    "default":      {"temperature": 0.8, "top_k": 40, "top_p": 0.9, "do_sample": True, "seed": None} 
 }
 
 class OllamaService:
@@ -120,7 +100,7 @@ class OllamaService:
             self.logger.info("Ollama is already running.")
             return
         
-        self.logger.info("Starting Ollama server...")
+        self.logger.info("Starting Ollama server.")
         subprocess.Popen(
             ["ollama", "serve"],
             stdout=subprocess.DEVNULL,
@@ -168,6 +148,7 @@ class HTMLFormatter(logging.Formatter):
         color = self.COLOR_MAP.get(record.levelno, "black")
         levelname = f'<span style="color:{color}; font-weight:bold;">[{record.levelname}]</span>'
         message = super().format(record)
+
         # Remove the old levelname to avoid duplication
         message = message.replace(record.levelname, "").strip()
         return f"{levelname} {message}"
@@ -221,14 +202,15 @@ def setup_logger(
     Returns:
         logging.Logger: Configured logger instance.
     """
+
+    # Clean up any handlers attached to the root logger (to prevent duplicate logs)
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
         
     numeric_level = getattr(logging, level.upper(), None)
     if not isinstance(numeric_level, int):
         raise ValueError(f"Invalid log level: {level}")
     
-    # Basic root config (no handlers set here because we add them manually)
-    logging.basicConfig(level=numeric_level, force=True)
-
     # Suppress overly verbose logs
     logging.getLogger("datasets").setLevel(logging.WARNING)
     logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
@@ -239,41 +221,28 @@ def setup_logger(
     logging.getLogger('langchain').setLevel(logging.INFO)
     logging.getLogger("pypdf").setLevel(logging.CRITICAL)
 
-
-    # Custom formatter and handler
-    #formatter = CustomFormatter("%(levelname)s %(message)s")
-    #handler = logging.StreamHandler()
-    #handler.setFormatter(formatter)
-
     # Create logger
     logger = logging.getLogger(name) if name else logging.getLogger()
     logger.setLevel(numeric_level)
     logger.handlers.clear()
-    #logger.addHandler(handler)
     logger.propagate = False  # Prevent double logging
-
-    # Colored formatter
-    colored_formatter = HTMLFormatter("%(levelname)s %(message)s")
-
-    # Console handler with colors
-    console_handler = logging.StreamHandler()    
-    console_handler.setFormatter(colored_formatter)
-    logger.addHandler(console_handler)
 
     # Queue handler for GUI logs (without colors)
     if log_queue:
         queue_handler = QueueHandler(log_queue)
-        #queue_formatter = logging.Formatter("%(levelname)s %(message)s")
-        queue_handler.setFormatter(colored_formatter)
+        ui_formatter = HTMLFormatter("%(levelname)s %(message)s")
+        queue_handler.setFormatter(ui_formatter)
         logger.addHandler(queue_handler)
+    else:
+        # Console handler with colors
+        console_handler = logging.StreamHandler()    
+        console_formatter = logging.Formatter("[%(levelname)s] %(message)s")
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
 
     logging.captureWarnings(True)
 
     return logger
-
-# Initialize a shared logger once at module level
-logger = setup_logger(__name__, level="INFO")
-
 
 class OpenAILangChain:
     """
@@ -447,16 +416,10 @@ class CustomLangChain:
             # Create logger here if not passed
             self.logger = setup_logger(name=__name__, level=self.log_level.upper())
 
-        # Create the LLMs: the question rewriter and the answerer
-        mode_presets = {
-            "conservative": {"temperature": 0.0, "top_k": 10, "top_p": 0.3, "do_sample": False, "seed": SEED},
-            "creative":     {"temperature": 0.8, "top_k": 70, "top_p": 0.9, "do_sample": True, "seed": None}, 
-            "default":      {"temperature": 0.8, "top_k": 40, "top_p": 0.9, "do_sample": True, "seed": None} 
-        }
-        
+        # Create the LLMs: the question rewriter and the answerer       
         self.openai = openai_client
-        self.llm_rewriter = self.load_llm(mode=mode_presets['conservative'])
-        self.llm_answerer = self.load_llm(mode=mode_presets[mode])
+        self.llm_rewriter = self.load_llm(type='rewriter', mode=MODE_PRESETS['conservative'])
+        self.llm_answerer = self.load_llm(type='answerer', mode=MODE_PRESETS[mode])
 
         # Initialize framework components
         self.logger.info(f"Initializing LangChaing: {model_name}, top {top_docs} docs.")
@@ -467,26 +430,35 @@ class CustomLangChain:
         self.retrieval_chain = self.build_chain()
 
         # Start Ollama if needed
-        self.ollama_service = OllamaService(logger=self.logger)
-        self.ollama_service.activate()
+        if not(self.is_gpt()):
+            self.ollama_service = OllamaService(logger=self.logger)
+            self.ollama_service.activate()
 
         self.logger.info("LangChain sucessfully initialized.")  
  
+    def is_gpt(self):
 
-    def load_llm(self, mode):
+        """
+        Returns a boolean indicating if the LLM is a GPT model
+        """
+
+        return self.model_name.startswith('gpt-')
+    
+    def load_llm(self, type, mode):
+        
         """
         Load the local chat model from Ollama.
 
         Returns:
-            ChatOllama: Configured language model.
+            ChatOpenAI/ChatOllama: Configured language model.
         """
 
         # Evaluate log level
-        if self.log_level_num >= CUSTOM_LOG_LEVELS['debug']:
-            self.logger.debug(f"Loading Ollama model: {self.model_name}.")
+        if self.log_level_num >= CUSTOM_LOG_LEVELS['info']:
+            self.logger.info(f"Loading {type} LLM: {self.model_name} | temperature={mode['temperature']} | tone={self.tone}.")
 
         # Load LLM
-        if self.model_name.startswith('gpt-'):              
+        if self.is_gpt():
             return ChatOpenAI(
                 model_name=self.model_name,
                 temperature=mode["temperature"],
@@ -515,8 +487,8 @@ class CustomLangChain:
         """
 
         # Evaluate log level
-        if self.log_level_num >= CUSTOM_LOG_LEVELS['debug']:
-            self.logger.debug(f"Loading Hugging Face model: {self.model_name}.")
+        if self.log_level_num >= CUSTOM_LOG_LEVELS['info']:
+            self.logger.info(f"Loading {type} LLM: {self.model_name} | temperature={mode['temperature']} | tone={self.tone}.")
 
          # Load the tokenizer from Hugging Face
         tokenizer = AutoTokenizer.from_pretrained(
@@ -831,658 +803,3 @@ class CustomLangChain:
     def stream_text(text, chunk_size=10):
         for i in range(0, len(text), chunk_size):
             yield text[i:i+chunk_size]
-
-
-class VectorEmbedding:
-
-    """
-    A class for processing documents into vector embeddings and visualizing them in 2D space.
-
-    This class supports:
-    - Loading markdown and PDF documents from directories.
-    - Splitting them into text chunks.
-    - Computing vector embeddings using a selected model.
-    - Storing them in a Chroma vector store.
-    - Loading an existing vectorstore.
-    - Visualizing results using dimensionality reduction and clustering.
-    """
-
-    def __init__(
-        self,
-        device: str="cpu",
-        log_level: str = "info",
-        logger: Optional[logging.Logger] = None
-    ):
-        
-        """
-        Initialize the VectorEmbedding instance with document path, DB name, and embedding model.
-
-        Args:
-            embedding_model (str): Embedding model to use. Options:
-                - "huggingface_384"
-                - "huggingface_768"
-                - "huggingface_1024" (default)
-                - "openai_default", "openai_small", "openai_large"
-                - "claude"
-        """
-
-        self.device = device
-        self.folders = None
-        self.vector_db_name = None
-        self.documents = None
-        self.chunks = None
-        self.chunk_size = None
-        self.chunk_overlap = None
-        self.clean_text_flag = None
-        self.vectorstore = None
-        self.collection = None
-        self.embedding_model = None #embedding_model
-        self.embeddings = None #self.load_embeddings()
-
-        # Initialize logger
-        levels = CUSTOM_LOG_LEVELS.keys()
-        self.log_level = log_level if log_level in levels else 'none'
-        self.log_level_num = CUSTOM_LOG_LEVELS[self.log_level]
-        if logger:
-            # Use the provided logger, but override level if different
-            self.logger = logger
-            level_map = lambda custom_level: max(10, min(int(20 / custom_level), 50))
-            self.logger.setLevel(level_map(self.log_level_num))
-        else:
-            # Create logger here if not passed
-            self.logger = setup_logger(name=__name__, level=self.log_level.upper())
-
-        self.logger.info(f"Set {self.device} device.")
-
-    @staticmethod
-    def clean_text(text):
-        """
-        Clean text by removing common boilerplate elements from research papers and slides.
-        
-        Args:
-            text (str): Input raw text.
-            
-        Returns:
-            str: Cleaned text.
-        """
-
-        # Remove page numbers like "Page 1", "page 2 of 10", "p. 3"
-        text = re.sub(r'\b(Page|page|p\.)\s+\d+(\s+of\s+\d+)?\b', '', text)
-
-        # Remove common confidentiality disclaimers
-        text = re.sub(r'(?i)(confidential|proprietary|do not distribute|internal use only|copyright).*?\n', '', text)
-
-        # Remove headers/footers with author names, journal titles, slide titles
-        text = re.sub(r'(?i)(IEEE|ACM|Springer|Elsevier|Slide\s*\d+|presentation title|author:.*|university of .*)', '', text)
-
-        # Remove figure/table captions
-        text = re.sub(r'(?i)(figure|fig\.|table)\s*\d+[:.\-]', '', text)
-
-        # Remove references and citations like [1], [12], (Smith et al., 2020)
-        text = re.sub(r'\[\d+\]', '', text)
-        text = re.sub(r'\(([^()]+ et al\.,? \d{4})\)', '', text)
-
-        # Remove superindices and footnote markers (*, †, ‡, §, #, etc.)
-        #text = re.sub(r'(?<=\w)[\*\†\‡\§#]+', '', text)
-
-        # Remove standalone bullet points or numbering (e.g. "•", "-", "1.", "a)")
-        text = re.sub(r'^\s*[\u2022\-–•]|\b\d+\.\s+|\b[a-z]\)\s+', '', text, flags=re.MULTILINE)
-
-        text=re.sub(r'[A-Za-z0-9]*@[A-Za-z]*\.?[A-Za-z0-9]*', "", text)
-
-        # Remove citations like [1], (Smith et al., 2020)
-        text = re.sub(r'\[\d+\]', '', text)
-        text = re.sub(r'\(([^()]+ et al\.,? \d{4})\)', '', text)
-
-        # Remove multiple punctuation artifacts (e.g., " ,", ",,,")
-        text = re.sub(r'\s+([,.;:])', r'\1', text)
-        text = re.sub(r',,+', ',', text)
-
-        # Normalize whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
-
-        return text
-
-    @staticmethod
-    def clean_text_(text):
-
-        """
-        Clean text by removing common boilerplate elements like page numbers and disclaimers.
-
-        Args:
-            text (str): Input raw text.
-
-        Returns:
-            str: Cleaned text.
-        """
-
-        text = re.sub(r'\bPage\s+\d+\b', '', text)
-        text = re.sub(r'(?i)confidential.*?\n', '', text)
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text
-
-
-    def load_embeddings(self):
-
-        """
-        Load the embedding function based on the chosen model name.
-
-        Returns:
-            An instance of a LangChain-compatible embedding function.
-        """
-
-        if "huggingface" in self.embedding_model:
-            model_map = {
-                "huggingface_384": "sentence-transformers/all-MiniLM-L6-v2",
-                "huggingface_768": "bert-base-nli-mean-tokens",
-                "huggingface_1024": "BAAI/bge-large-en"
-            }
-            model_name = model_map.get(self.embedding_model)
-            if not model_name:
-                self.logger.error(f"Unknown HuggingFace model: {self.embedding_model}")
-                raise ValueError(f"Unsupported HuggingFace embedding model: {self.embedding_model}")
-            self.logger.info(f"Using Hugging Face model: {model_name}.")
-            return HuggingFaceEmbeddings(model_name=model_name, model_kwargs={"device": self.device})
-
-        elif "openai" in self.embedding_model:
-            load_dotenv(override=True)
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise EnvironmentError("Missing OPENAI_API_KEY in environment.")
-            os.environ['OPENAI_API_KEY'] = api_key
-            model_map = {
-                "openai_default": "text-embedding-ada-002",
-                "openai_small": "text-embedding-3-small",
-                "openai_large": "text-embedding-3-large"
-            }
-            model = model_map.get(self.embedding_model)
-            if not model:
-                self.logger.error(f"Unknown OpenAI model: {self.embedding_model}")
-                raise ValueError(f"Unsupported OpenAI embedding model: {self.embedding_model}")
-            self.logger.info(f"Using OpenAI model: {model}.")
-            return OpenAIEmbeddings(model=model)
-
-        elif self.embedding_model == "claude":
-            if ClaudeEmbeddings is None:
-                raise ImportError("ClaudeEmbeddings class is not available.")
-            self.logger.info("Using Claude embeddings.")
-            return ClaudeEmbeddings(model="claude-3-sonnet-20240229")
-
-        else:
-            self.logger.error(f"Unknown embedding model: {self.embedding_model}.")
-            raise ValueError(f"Unsupported embedding model: {self.embedding_model}")
-        
-
-    def split_into_chunks(
-        self,
-        document_path: str = '',
-        chunk_size: int = 1000,
-        chunk_overlap: int = 300,
-        clean_text_flag: bool = False,
-        ):
-
-        """
-        Load markdown and PDF documents from subfolders, optionally clean them,
-        and split the content into chunks.
-
-        Args:
-            document_path (str): Path to the root folder containing subfolders with documents.            
-            chunk_size (int): Number of characters per text chunk.
-            chunk_overlap (int): Overlap between chunks.
-            clean_text_flag (bool): Whether to clean text before chunking.
-
-        Returns:
-            tuple:
-                - chunks (List[Document]): The text chunks to embed.
-                - documents (List[Document]): Original loaded documents.
-        """
-
-        if not os.path.isdir(document_path):
-            self.logger.error(f"Folder does not exist: {document_path}")
-            raise FileNotFoundError(f"Folder does not exist: {document_path}")
-
-        self.logger.info("Splitting documents into chunks...")
-
-        self.folders = glob.glob(f"{document_path}/*")
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.clean_text_flag = clean_text_flag
-
-        documents = []
-        doc_counter = 0
-        for folder in self.folders:
-
-            doc_type = os.path.basename(folder)
-            md_loader = DirectoryLoader(folder, glob="**/*.md", loader_cls=TextLoader, loader_kwargs={'encoding': 'utf-8'})
-            pdf_loader = DirectoryLoader(folder, glob="**/*.pdf", loader_cls=PyPDFLoader)
-            docx_loader = DirectoryLoader(folder, glob="**/*.docx", loader_cls=UnstructuredWordDocumentLoader)            
-            loaders = [md_loader, pdf_loader, docx_loader]
-            #for loader in loaders:
-            #    for doc in loader.load():
-            #        if self.clean_text_flag:
-            #            doc.page_content = self.clean_text(doc.page_content)
-            #        doc.metadata["doc_type"] = doc_type
-            #        documents.append(doc)
-
-            for loader in loaders:
-                try:
-                    docs = loader.load()
-                except Exception as e:
-                    self.logger.warning(f"Failed to load documents from {loader}: {e}.")
-                    continue
-
-                for doc in docs:
-                    doc_counter += 1
-                    if self.clean_text_flag:
-                        doc.page_content = self.clean_text(doc.page_content)
-                    doc.metadata["doc_type"] = doc_type
-                    documents.append(doc)
-
-                    if doc_counter % 1000 == 0:
-                        self.logger.info(f"Processed {doc_counter} documents...")
-
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            separators=["\n\n", "\n", ".", " ", ""]
-        )
-
-        chunks = text_splitter.split_documents(documents)
-
-        self.chunks, self.documents = chunks, documents
-
-        self.logger.info(f"Total number of chunks: {len(chunks)}.")
-        self.logger.info(f"Document types found: {set(doc.metadata['doc_type'] for doc in documents)}.")
-
-        #return chunks, documents
-        return self
-
-    def create_vectorstore(
-        self,
-        vector_db_name: str = 'vector_db',
-        embedding_model: str = "huggingface_1024",    
-    ):
-
-        """
-        Compute and store embeddings for document chunks in a persistent Chroma vectorstore.
-
-        Args:            
-            vector_db_name (str): Name/path of the persistent vector database directory.
-            embedding_model (str): Embedding model to use. Options:
-                - "huggingface_384"
-                - "huggingface_768"
-                - "huggingface_1024" (default)
-                - "openai_default",
-                - "openai_small",
-                - "openai_large"
-                - "claude"
-
-        Returns:
-            Chroma: The created vectorstore instance.
-        """
-
-        if self.chunks == None:
-            self.logger.error("Chunks not found. Please call split_into_chunks() first.")
-            raise RuntimeError("Chunks not found. Please call split_into_chunks() first.")
-
-        self.vector_db_name = vector_db_name
-        self.embedding_model = embedding_model
-        self.embeddings = self.load_embeddings()
-
-        # Delete existing collection if it exists
-        if os.path.exists(self.vector_db_name):
-            Chroma(persist_directory=self.vector_db_name, embedding_function=self.embeddings).delete_collection()
-
-        self.logger.info("Creating vectorstore...")
-
-        self.vectorstore = Chroma.from_documents(
-            documents=self.chunks,
-            embedding=self.embeddings,
-            persist_directory=self.vector_db_name
-        )
-
-        self.collection = self.vectorstore._collection
-        sample_embedding = self.collection.get(limit=1, include=["embeddings"])["embeddings"][0]
-
-        self.logger.info(f"Vectorstore created with {self.collection.count():,} vectors of {len(sample_embedding):,} dimensions.")
-
-        return self.vectorstore
-
-    def load_vectorstore(
-        self,        
-        vector_db_name: str = 'vector_db',
-        embedding_model: str = "huggingface_1024",
-        ):
-
-        """
-        Load an existing vectorstore from disk using the configured embedding function.
-
-        Args:            
-            vector_db_name (str): Name/path of the persistent vector database directory.
-            embedding_model (str): Embedding model to use. Options:
-                - "huggingface_384"
-                - "huggingface_768"
-                - "huggingface_1024" (default)
-                - "openai_default",
-                - "openai_small",
-                - "openai_large"
-                - "claude"
-        """
-
-        self.vector_db_name = vector_db_name
-        self.embedding_model = embedding_model
-        self.embeddings = self.load_embeddings()
-
-        self.logger.info("Loading vectorstore...")
-
-        self.vectorstore = Chroma(
-            persist_directory=self.vector_db_name,
-            embedding_function=self.embeddings
-        )
-
-        self.collection = self.vectorstore._collection
-        count = self.collection.count()
-        sample_embedding = self.collection.get(limit=1, include=["embeddings"])["embeddings"][0]
-        dimensions = len(sample_embedding)
-
-        self.logger.info(f"Vectorstore loaded with {self.vectorstore._collection.count()} documents and {count:,} vectors with {dimensions:,} dimensions.")
-
-        return self.vectorstore
-
-    def visualize_2d_cluster(
-        self,
-        n_clusters=5,
-        pt_size=5,        
-        cmap='viridis',
-        seed=42):
-
-        """
-        Perform k-means clustering and t-SNE dimensionality reduction to visualize document embeddings in 2D.
-
-        Args:
-            n_clusters (int): Number of clusters for KMeans.
-            seed (int): Random seed for reproducibility.
-            cmap (str): Color map used for plotting.
-        """
-
-        result = self.collection.get(include=['embeddings', 'documents', 'metadatas'])
-        vectors = np.array(result['embeddings'])
-        documents = result['documents']
-        metadatas = result['metadatas']
-        doc_types = [metadata['doc_type'] for metadata in metadatas]
-
-        kmeans = KMeans(
-            n_clusters=n_clusters,
-            random_state=seed,
-            #algorithm='elkan',
-            max_iter=1000
-        )
-        labels = kmeans.fit_predict(vectors)
-
-        #clusterer = hdbscan.HDBSCAN(min_cluster_size=100)
-        #labels = clusterer.fit_predict(vectors)
-        
-        tsne = TSNE(n_components=2, random_state=seed)
-        reduced = tsne.fit_transform(vectors)
-
-        hover_text = [f"Type: {t}<br>Text: {d[:10]}..." for t, d in zip(doc_types, documents)]
-
-        marker = dict(
-            size=pt_size,
-            color=labels,
-            colorscale=cmap,
-            line=dict(width=0.5, color='gray'),
-            opacity=0.8
-        )
-
-        fig = go.Figure(data=[go.Scatter(
-            x=reduced[:, 0],
-            y=reduced[:, 1],
-            mode='markers',
-            marker=marker,
-            text=hover_text,
-            hoverinfo='text'
-        )])
-
-        fig.update_layout(
-            title="Document Clusters",
-            xaxis_title="Vector Dim 1",
-            yaxis_title="Vector Dim 2",
-            width=900,
-            height=800
-        )
-
-        fig.show()
-
-    def visualize_2d(
-            self,
-            figsize=(14, 7),            
-            cmap='plasma',
-            background='white',
-            pt_size=5,
-            marker='o',
-            legend_fontsize='large',
-            legend_loc='upper right',
-            seed=42):
-        """
-        Perform t-SNE dimensionality reduction and visualize document embeddings in 2D.
-
-        Args:
-            seed (int): Random seed for reproducibility.
-            cmap (str): Colormap name (e.g., 'plasma', 'tab10').
-            background (str): 'black' or 'white' background mode.
-        """
-
-        if not self.vectorstore:  #or self.collection
-            raise RuntimeError("Vectorstore is not initialized. Please run 'create_vectorstore()' or 'load_vectorstore()' first.")
-
-        result = self.collection.get(include=['embeddings', 'documents', 'metadatas'])
-        vectors = np.array(result['embeddings'])
-        documents = result['documents']
-        metadatas = result['metadatas']
-        doc_types = [metadata['doc_type'] for metadata in metadatas]
-        unique_types = sorted(set(doc_types))
-
-        # Run t-SNE
-        tsne = TSNE(n_components=2, random_state=seed)
-        reduced = tsne.fit_transform(vectors)
-
-        # Color setup
-        colormap = cm.get_cmap(cmap, len(unique_types))
-        type_to_color = {
-            t: to_hex(colormap(i)) for i, t in enumerate(unique_types)
-        }
-
-        # Background color config
-        if background == 'black':
-            bg_color = 'black'
-            fg_color = 'white'
-            tick_color = 'gray'
-            grid_color = 'gray'
-        else:
-            bg_color = 'white'
-            fg_color = 'black'
-            tick_color = 'black'
-            grid_color = 'lightgray'
-
-        # Plot setup
-        #fig = plt.figure(figsize=(7, 7))
-        #fig.patch.set_facecolor(bg_color)
-        #ax = plt.gca()
-        #ax.set_facecolor(bg_color)
-
-        fig, ax = plt.subplots(figsize=figsize, layout='constrained')
-        ax.set_facecolor(bg_color)
-
-        for t in unique_types:
-            idx = [i for i, label in enumerate(doc_types) if label == t]
-            plt.scatter(
-                reduced[idx, 0],
-                reduced[idx, 1],
-                s=pt_size,
-                alpha=1,
-                label=t,
-                color=type_to_color[t],
-                marker=marker
-            )
-
-        ax.grid(True, color=grid_color, linestyle='-', alpha=0.5)
-
-        legend = fig.legend(
-            title="Category",
-            loc=legend_loc,
-            facecolor=bg_color,
-            edgecolor=fg_color,
-            labelcolor=fg_color,
-            fontsize=legend_fontsize,
-            #layout='constrained',
-            #bbox_to_anchor=bbox_to_anchor,
-            #borderaxespad=0.
-        )
-        legend.get_title().set_color(fg_color)
-        legend.get_title().set_fontsize('large')
-
-        
-        ax.set_title("Document Clusters", color=fg_color, size='x-large', pad=20)
-        ax.set_xlabel("Vector Dim 1", color=fg_color)
-        ax.set_ylabel("Vector Dim 2", color=fg_color)
-        ax.tick_params(axis='x', colors=tick_color)
-        ax.tick_params(axis='y', colors=tick_color)
-        
-        #plt.tight_layout()
-        plt.show()
-
-
-class Talker:
-    """
-    Agent class responsible for converting text messages into speech
-    and playing the audio output using a specified voice model.
-    """
-    def __init__(
-        self,
-        openai_client,
-        voice="onyx",        
-        log_level="info"):
-        """
-        Initialize the Talker agent with a default or specified voice.
-
-        Args:
-            voice (str): The voice model to use for TTS (default is "onyx").
-            log_level (str): Specifies the logging level
-        """
-    
-        # Initialize OpenAI
-        self.openai = openai_client
-
-        # Set voice model
-        self.voice = voice
-
-        # Initialize logger
-        levels = CUSTOM_LOG_LEVELS.keys()
-        self.log_level = log_level if log_level in levels else 'none'
-        self.log_level_num = CUSTOM_LOG_LEVELS[self.log_level]
-        self.logger = logger
-        self.logger.info(f"Talker initialized with voice: {self.voice}.")
-
-    def speak(self, message):
-        """
-        Generate speech audio from the given text message and play it.
-
-        Args:
-            message (str): The text message to convert to speech.
-        """
-        if not isinstance(message, str) or message.strip() == "":
-            self.logger.error("Invalid message passed to Talker.speak — must be a non-empty string.")
-            return
-
-        try:
-            self.logger.debug(f"Generating speech for message: {message}")
-        
-            # Call OpenAI API to generate TTS audio
-            response = self.openai.audio.speech.create(
-                model="tts-1",
-                voice=self.voice,
-                input=message
-            )
-
-            # Convert response content to audio segment
-            audio_stream = BytesIO(response.content)
-            audio = AudioSegment.from_file(audio_stream, format="mp3")
-
-            # Play the generated audio
-            play(audio)
-            self.logger.info("Audio playback completed successfully.")
-        
-        except Exception as e:
-            self.logger.error(f"Error in Talker.speak: {e}")
-
-
-class Whisper:
-    """
-    Agent class responsible for transcribing audio files into text
-    using the Whisper speech-to-text model.
-    """
-    def __init__(
-        self,
-        openai_client,
-        model="whisper-1",        
-        log_level: str="info"):
-        """
-        Initialize the Whisper agent with the specified transcription model.
-
-        Args:
-            model (str): The Whisper model to use for transcription (default is "whisper-1").
-            log_level (str): Specifies the logging level
-        """
-        # Initialize OpenAI
-        self.openai = openai_client
-
-        # Set model
-        self.model = model
-
-        # Initialize logger
-        levels = CUSTOM_LOG_LEVELS.keys()
-        self.log_level = log_level if log_level in levels else 'none'
-        self.log_level_num = CUSTOM_LOG_LEVELS[self.log_level]
-        self.logger = logger
-        self.logger.info(f"Whisper initialized with model: {self.model}.")
-
-
-    def transcribe(self, audio_file_path):
-        """
-        Transcribe the audio file located at audio_file_path into text.
-
-        Args:
-            audio_file_path (str): Path to the audio file to transcribe.
-
-        Returns:
-            str: The transcribed text, or an error message if transcription fails.
-        """
-        try:
-            # Validate input path
-            if audio_file_path is None or audio_file_path == "":
-                return ""
-            if not os.path.exists(audio_file_path):
-                error_msg = f"Error: Audio file does not exist at path {audio_file_path}"
-                self.logger.error(error_msg)
-                return error_msg
-            if os.path.getsize(audio_file_path) == 0:
-                error_msg = "Error: Audio file is empty"
-                self.logger.error(error_msg)
-                return error_msg
-
-            # Open audio file and send to OpenAI Whisper model
-            with open(audio_file_path, "rb") as audio_file:
-                response = self.openai.audio.transcriptions.create(
-                    model=self.model,
-                    file=audio_file
-                )
-                # Debug: print the raw transcription response text
-                self.logger.debug(f"OpenAI API response: {response.text}")
-                return response.text
-
-        except Exception as e:
-            # Return error message if something goes wrong
-            error_msg = f"An error occurred: {e}"
-            self.logger.error(error_msg)
-            return error_msg

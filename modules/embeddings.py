@@ -10,19 +10,23 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import to_hex
 from typing import Optional, List
-from modules.embeddings import ClaudeEmbeddings
 from dotenv import load_dotenv
 
 # LangChain
 from langchain_chroma import Chroma
-from langchain.document_loaders import DirectoryLoader, TextLoader, PyPDFLoader, UnstructuredWordDocumentLoader
+from langchain_community.document_loaders import (
+    DirectoryLoader,
+    TextLoader,
+    PyPDFLoader,
+    UnstructuredWordDocumentLoader,
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain.embeddings.base import Embeddings
 
 # From langchain.py
-from modules.langchain import CUSTOM_LOG_LEVELS, logger, setup_logger
+from modules.langchain import CUSTOM_LOG_LEVELS, setup_logger
 
 # Sklearn for clustering
 from sklearn.manifold import TSNE
@@ -99,7 +103,7 @@ class VectorEmbedding:
         self.vectorstore = None
         self.collection = None
         self.embedding_model = None #embedding_model
-        self.embeddings = None #self.load_embeddings()
+        self.embeddings = None
 
         # Initialize logger
         levels = CUSTOM_LOG_LEVELS.keys()
@@ -202,9 +206,9 @@ class VectorEmbedding:
             }
             model_name = model_map.get(self.embedding_model)
             if not model_name:
-                self.logger.error(f"{self.prefix}: Unknown HuggingFace model: {self.embedding_model}")
-                raise ValueError(f"{self.prefix}: Unsupported HuggingFace embedding model: {self.embedding_model}")
-            self.logger.info(f"{self.prefix}: Using Hugging Face model: {model_name}.")
+                self.logger.error(f"{self.prefix}: Unknown HuggingFace model {self.embedding_model}")
+                raise ValueError(f"{self.prefix}: Unsupported HuggingFace embedding model {self.embedding_model}")
+            self.logger.info(f"{self.prefix}: Using Hugging Face model {model_name}.")
             return HuggingFaceEmbeddings(model_name=model_name, model_kwargs={"device": self.device})
 
         elif "openai" in self.embedding_model:
@@ -220,9 +224,9 @@ class VectorEmbedding:
             }
             model = model_map.get(self.embedding_model)
             if not model:
-                self.logger.error(f"{self.prefix}: Unknown OpenAI model: {self.embedding_model}")
-                raise ValueError(f"{self.prefix}: Unsupported OpenAI embedding model: {self.embedding_model}")
-            self.logger.info(f"{self.prefix}: Using OpenAI model: {model}.")
+                self.logger.error(f"{self.prefix}: Unknown OpenAI model {self.embedding_model}")
+                raise ValueError(f"{self.prefix}: Unsupported OpenAI embedding model {self.embedding_model}")
+            self.logger.info(f"{self.prefix}: Using OpenAI model {model}.")
             return OpenAIEmbeddings(model=model)
 
         elif self.embedding_model == "claude":
@@ -232,8 +236,8 @@ class VectorEmbedding:
             return ClaudeEmbeddings(model="claude-3-sonnet-20240229")
 
         else:
-            self.logger.error(f"{self.prefix}: Unknown embedding model: {self.embedding_model}.")
-            raise ValueError(f"{self.prefix}: Unsupported embedding model: {self.embedding_model}")
+            self.logger.error(f"{self.prefix}: Unknown embedding model {self.embedding_model}.")
+            raise ValueError(f"{self.prefix}: Unsupported embedding model {self.embedding_model}")
         
 
     def split_into_chunks(
@@ -264,7 +268,7 @@ class VectorEmbedding:
             self.logger.error(f"{self.prefix}: Folder does not exist: {document_path}")
             raise FileNotFoundError(f"{self.prefix}: Folder does not exist: {document_path}")
 
-        self.logger.info("Splitting documents into chunks...")
+        self.logger.info("Splitting documents into chunks.")
 
         self.folders = glob.glob(f"{document_path}/*")
         self.chunk_size = chunk_size
@@ -327,7 +331,7 @@ class VectorEmbedding:
     ):
 
         """
-        Compute and store embeddings for document chunks in a persistent Chroma vectorstore.
+        Compute and store embeddings for document chunks in a persistent Chroma vector database.
 
         Args:            
             vector_db_name (str): Name/path of the persistent vector database directory.
@@ -341,7 +345,7 @@ class VectorEmbedding:
                 - "claude"
 
         Returns:
-            Chroma: The created vectorstore instance.
+            Chroma: The created vector database instance.
         """
 
         if self.chunks == None:
@@ -356,7 +360,7 @@ class VectorEmbedding:
         if os.path.exists(self.vector_db_name):
             Chroma(persist_directory=self.vector_db_name, embedding_function=self.embeddings).delete_collection()
 
-        self.logger.info(f"{self.prefix}: Creating vectorstore...")
+        self.logger.info(f"{self.prefix}: Creating vector database.")
 
         self.vectorstore = Chroma.from_documents(
             documents=self.chunks,
@@ -367,7 +371,9 @@ class VectorEmbedding:
         self.collection = self.vectorstore._collection
         sample_embedding = self.collection.get(limit=1, include=["embeddings"])["embeddings"][0]
 
-        self.logger.info(f"{self.prefix}: Vectorstore created with {self.collection.count():,} vectors of {len(sample_embedding):,} dimensions.")
+        self.logger.info(
+            f"{self.prefix}: Vector database created: {self.collection.count():,} vectors of {len(sample_embedding):,} dimensions."
+)
 
         return self.vectorstore
 
@@ -396,7 +402,7 @@ class VectorEmbedding:
         self.embedding_model = embedding_model
         self.embeddings = self.load_embeddings()
 
-        self.logger.info(f"{self.prefix}: Loading vectorstore...")
+        self.logger.info(f"{self.prefix}: Loading vector database.")
 
         self.vectorstore = Chroma(
             persist_directory=self.vector_db_name,
@@ -404,11 +410,12 @@ class VectorEmbedding:
         )
 
         self.collection = self.vectorstore._collection
+        docs = self.vectorstore._collection.count()
         count = self.collection.count()
         sample_embedding = self.collection.get(limit=1, include=["embeddings"])["embeddings"][0]
         dimensions = len(sample_embedding)
 
-        self.logger.info(f"{self.prefix}: Vectorstore loaded with {self.vectorstore._collection.count()} documents and {count:,} vectors with {dimensions:,} dimensions.")
+        self.logger.info(f"{self.prefix}: Vector database loaded: {docs:,} documents, {count:,} vectors, {dimensions:,} dims/vector.")
 
         return self.vectorstore
 
@@ -497,7 +504,7 @@ class VectorEmbedding:
         """
 
         if not self.vectorstore:  #or self.collection
-            raise RuntimeError(f"{self.prefix}: Vectorstore is not initialized. Please run 'create_vectorstore()' or 'load_vectorstore()' first.")
+            raise RuntimeError(f"{self.prefix}: Vector database is not initialized. Please run 'create_vectorstore()' or 'load_vectorstore()' first.")
 
         result = self.collection.get(include=['embeddings', 'documents', 'metadatas'])
         vectors = np.array(result['embeddings'])
